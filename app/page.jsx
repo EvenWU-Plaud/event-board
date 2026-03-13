@@ -1,5 +1,6 @@
 "use client";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { supabase } from "../lib/supabase";
 
 const currentUser = "Even";
 
@@ -459,7 +460,7 @@ export default function App() {
   const [calendarRegionFilter, setCalendarRegionFilter] = useState("all");
   const [calendarOwnerFilter, setCalendarOwnerFilter] = useState("all");
   const [calendarCategoryFilter, setCalendarCategoryFilter] = useState("all");
-  const [projects, setProjects] = useState(initialProjects);
+  const [projects, setProjects] = useState([]);
   const [applications, setApplications] = useState(initialApplications);
   const [selectedProjectId, setSelectedProjectId] = useState(initialProjects[0]?.id || null);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -475,6 +476,86 @@ export default function App() {
   const [reviewFilter, setReviewFilter] = useState("waiting");
   const [showApplyQueue, setShowApplyQueue] = useState(false);
   const [showMaterialsTable, setShowMaterialsTable] = useState(false);
+useEffect(() => {
+  async function loadEvents() {
+    const { data, error } = await supabase
+      .from("events")
+      .select("*")
+      .order("id", { ascending: true });
+
+    if (error) {
+      console.error("Failed to load events:", error);
+      return;
+    }
+
+    const mapped = (data || []).map((item) => ({
+      id: item.id,
+      name: item.name,
+      country: item.country,
+      region: item.region,
+      city: item.city,
+      owner: item.owner,
+      stage: item.stage,
+      priority: item.priority,
+      startDate: item.start_date,
+      endDate: item.end_date,
+      budget: Number(item.budget || 0),
+      category: item.category,
+      notes: item.notes || "",
+      sellable: item.sellable || "",
+      boothSizeSqm: item.booth_size_sqm || "",
+      boothOpenSides: item.booth_open_sides || "",
+      workstreams: cloneWorkstreams(),
+      budgetItems: cloneBudgetItems(),
+      materials: cloneMaterials(),
+      timeline: buildTimeline(item.start_date),
+    }));
+
+    setProjects(mapped);
+    if (mapped.length > 0) {
+      setSelectedProjectId(mapped[0].id);
+    }
+  }
+
+  loadEvents();
+}, []);
+async function createEventInSupabase(eventData) {
+  const payload = {
+    name: eventData.name,
+    country: eventData.country,
+    region: eventData.region,
+    city: eventData.city,
+    owner: eventData.owner,
+    stage: eventData.stage || "Planning",
+    priority: eventData.priority,
+    start_date: eventData.startDate,
+    end_date: eventData.endDate,
+    budget: Number(eventData.budget || 0),
+    category: eventData.category,
+    notes: eventData.notes || "",
+    sellable: eventData.sellable || "",
+    booth_size_sqm: eventData.boothSizeSqm || "",
+    booth_open_sides: eventData.boothOpenSides || "",
+  };
+
+  const { data, error } = await supabase
+    .from("events")
+    .insert([payload])
+    .select()
+    .single();
+
+  if (error) {
+    console.error("Failed to create event:", error);
+    alert("Failed to create event. Please check console.");
+    return null;
+  }
+
+  return data;
+}
+
+
+
+  
 
   const selectedProject = useMemo(() => projects.find((project) => project.id === selectedProjectId) || null, [projects, selectedProjectId]);
   const canEditSelectedProject = selectedProject?.owner === currentUser;
@@ -609,27 +690,57 @@ export default function App() {
     setBoardView("detail");
     setActiveTab("board");
   }
-  function handleAddProject(e) {
-    e.preventDefault();
-    const requiredMissing = [];
-    if (!newProject.name) requiredMissing.push("Event name");
-    if (!newProject.country) requiredMissing.push("Country");
-    if (!newProject.city) requiredMissing.push("City");
-    if (!newProject.category) requiredMissing.push("Event Category");
-    if (!newProject.owner) requiredMissing.push("Owner");
-    if (!newProject.startDate) requiredMissing.push("Start date");
-    if (!newProject.endDate) requiredMissing.push("End date");
-    if (!newProject.priority) requiredMissing.push("Priority");
-    if (requiredMissing.length > 0) { alert(`Cannot create event. Please fill required fields: ${requiredMissing.join(", ")}`); return; }
-    const projectToAdd = baseProject({ ...newProject, id: Date.now(), budget: Number(newProject.budget || 0), stage: newProject.stage || "Planning" });
-    setProjects((prev) => [projectToAdd, ...prev]);
-    setSelectedProjectId(projectToAdd.id);
-    setBoardView("detail");
-    setNewProject(emptyProject());
-    setCountrySearch("");
-    setShowCountryDropdown(false);
-    setShowAddModal(false);
+async function handleAddProject(e) {
+  e.preventDefault();
+
+  const requiredMissing = [];
+  if (!newProject.name) requiredMissing.push("Event name");
+  if (!newProject.country) requiredMissing.push("Country");
+  if (!newProject.city) requiredMissing.push("City");
+  if (!newProject.category) requiredMissing.push("Event Category");
+  if (!newProject.owner) requiredMissing.push("Owner");
+  if (!newProject.startDate) requiredMissing.push("Start date");
+  if (!newProject.endDate) requiredMissing.push("End date");
+  if (!newProject.priority) requiredMissing.push("Priority");
+
+  if (requiredMissing.length > 0) {
+    alert(
+      `Cannot create event. Please fill required fields: ${requiredMissing.join(", ")}`
+    );
+    return;
   }
+
+  const inserted = await createEventInSupabase(newProject);
+
+  if (!inserted) return;
+
+  const projectToAdd = baseProject({
+    id: inserted.id,
+    name: inserted.name,
+    country: inserted.country,
+    region: inserted.region,
+    city: inserted.city,
+    owner: inserted.owner,
+    stage: inserted.stage,
+    priority: inserted.priority,
+    startDate: inserted.start_date,
+    endDate: inserted.end_date,
+    budget: Number(inserted.budget || 0),
+    category: inserted.category,
+    notes: inserted.notes || "",
+    sellable: inserted.sellable || "",
+    boothSizeSqm: inserted.booth_size_sqm || "",
+    boothOpenSides: inserted.booth_open_sides || "",
+  });
+
+  setProjects((prev) => [projectToAdd, ...prev]);
+  setSelectedProjectId(projectToAdd.id);
+  setBoardView("detail");
+  setNewProject(emptyProject());
+  setCountrySearch("");
+  setShowCountryDropdown(false);
+  setShowAddModal(false);
+}
   function handleApplyForEvent(e) {
     e.preventDefault();
     const requiredMissing = [];
